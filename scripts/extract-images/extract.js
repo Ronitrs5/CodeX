@@ -2,8 +2,14 @@ const fs = require("fs");
 const path = require("path");
 
 const projectRoot = path.resolve(__dirname, "../..");
-const clonedDir = path.join(projectRoot, "Cloned-Game");
-const outputDir = path.join(projectRoot, "extractedImages");
+const generatedRoot = path.join(projectRoot, "Generated");
+
+const clonedDir = path.join(generatedRoot, "Cloned-Game");
+const outputDir = path.join(generatedRoot, "extractedImages");
+
+if (!fs.existsSync(generatedRoot)) {
+  fs.mkdirSync(generatedRoot);
+}
 
 const supportedImageExt = [
   ".png",

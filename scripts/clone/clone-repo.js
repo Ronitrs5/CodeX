@@ -13,7 +13,12 @@ if (!githubToken || !githubRepo || !branchFrom || !newFeatureBranchName) {
 }
 
 const parentDir = path.resolve(__dirname, "../..");
-const cloneDir = path.join(parentDir, "Cloned-Game");
+const generatedRoot = path.join(parentDir, "Generated");
+const cloneDir = path.join(generatedRoot, "Cloned-Game");
+
+if (!fs.existsSync(generatedRoot)) {
+  fs.mkdirSync(generatedRoot);
+}
 
 if (fs.existsSync(cloneDir)) {
   console.log("⚠️ Cloned-Game already exists. Deleting...");

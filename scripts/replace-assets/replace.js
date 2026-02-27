@@ -1,12 +1,18 @@
 const fs = require("fs");
 const path = require("path");
 const sharp = require("sharp");
+const { validateAndHandleAtlas } = require("../validation/spriteAtlasValidation.js");
 
 const projectRoot = path.resolve(__dirname, "../..");
-const newAssetsDir = path.join(projectRoot, "NewAssets");
-const clonedDir = path.join(projectRoot, "Cloned-Game");
+const generatedRoot = path.join(projectRoot, "Generated");
 
-const flaggedRoot = path.join(projectRoot, "flaggedAssets");
+const newAssetsDir = path.join(projectRoot, "NewAssets");
+const clonedDir = path.join(generatedRoot, "Cloned-Game");
+const flaggedRoot = path.join(generatedRoot, "flaggedAssets");
+
+if (!fs.existsSync(generatedRoot)) {
+  fs.mkdirSync(generatedRoot);
+}
 const initialFlaggedDir = path.join(flaggedRoot, "initialloadedflagged");
 const normalFlaggedDir = path.join(flaggedRoot, "normalloadedflagged");
 const jsonFlaggedDir = path.join(flaggedRoot, "jsonFlagged");
@@ -153,11 +159,18 @@ async function replaceAssets() {
     const oldFile = clonedMap[fileName];
 
     /* ---- Skip sprite sheets ---- */
-    if (spriteExtensions.includes(ext)) {
-      fs.copyFileSync(newFile, oldFile);
-      console.log("🟢 Sprite replaced:", fileName);
-      continue;
-    }
+if (spriteExtensions.includes(ext)) {
+  const atlasValid = validateAndHandleAtlas(fileName, oldFile, newFile);
+
+  if (atlasValid) {
+    fs.copyFileSync(newFile, oldFile);
+    console.log("🟢 Sprite replaced (validated):", fileName);
+  } else {
+    console.log("🚨 Sprite atlas mismatch flagged:", fileName);
+  }
+
+  continue;
+}
 
     /* ---- JSON VALIDATION ---- */
     const baseName = path.parse(fileName).name;
