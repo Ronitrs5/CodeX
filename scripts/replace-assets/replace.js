@@ -5,9 +5,30 @@ const sharp = require("sharp");
 const projectRoot = path.resolve(__dirname, "../..");
 const newAssetsDir = path.join(projectRoot, "NewAssets");
 const clonedDir = path.join(projectRoot, "Cloned-Game");
-const reportPath = path.join(projectRoot, "report.json");
+
+const flaggedRoot = path.join(projectRoot, "flaggedAssets");
+const initialFlaggedDir = path.join(flaggedRoot, "initialloadedflagged");
+const normalFlaggedDir = path.join(flaggedRoot, "normalloadedflagged");
+const jsonFlaggedDir = path.join(flaggedRoot, "jsonFlagged");
 
 const supportedImageExt = [".png", ".jpg", ".jpeg", ".webp"];
+const spriteExtensions = [".atlas", ".spline"];
+
+const strictKeywords = [
+  "splash",
+  "initial",
+  "init",
+  "loader",
+  "preload",
+  "loading",
+  "boot"
+];
+
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
 
 function getAllFiles(dir) {
   let results = [];
@@ -27,99 +48,195 @@ function getAllFiles(dir) {
   return results;
 }
 
+function percentDiff(oldVal, newVal) {
+  if (oldVal === 0) return 0;
+  return Math.abs(((newVal - oldVal) / oldVal) * 100);
+}
+
 function bytesToKB(bytes) {
   return (bytes / 1024).toFixed(2);
 }
 
 async function getDimensions(filePath) {
   try {
-    const ext = path.extname(filePath).toLowerCase();
-    if (!supportedImageExt.includes(ext)) return null;
-
     const metadata = await sharp(filePath).metadata();
-
     if (!metadata.width || !metadata.height) return null;
-
-    return `${metadata.width}x${metadata.height}`;
+    return { width: metadata.width, height: metadata.height };
   } catch {
     return null;
   }
 }
 
-async function replaceAssets() {
-  if (!fs.existsSync(newAssetsDir)) {
-    console.error("❌ NewAssets folder not found.");
-    process.exit(1);
+function isStrictAsset(fileName) {
+  const lower = fileName.toLowerCase();
+  return strictKeywords.some(keyword => lower.includes(keyword));
+}
+
+/* ---------------- JSON STRUCTURE VALIDATION ---------------- */
+
+function getStructure(obj) {
+  if (Array.isArray(obj)) {
+    return [getStructure(obj[0])];
   }
 
-  if (!fs.existsSync(clonedDir)) {
-    console.error("❌ Cloned-Game folder not found.");
-    process.exit(1);
+  if (obj !== null && typeof obj === "object") {
+    const structure = {};
+    Object.keys(obj).sort().forEach(key => {
+      structure[key] = getStructure(obj[key]);
+    });
+    return structure;
   }
+
+  return typeof obj;
+}
+
+function structuresAreEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function validateJsonStructure(oldJsonPath, newJsonPath) {
+  try {
+    const oldJson = JSON.parse(fs.readFileSync(oldJsonPath, "utf-8"));
+    const newJson = JSON.parse(fs.readFileSync(newJsonPath, "utf-8"));
+
+    const oldStructure = getStructure(oldJson);
+    const newStructure = getStructure(newJson);
+
+    return structuresAreEqual(oldStructure, newStructure);
+  } catch {
+    return false;
+  }
+}
+
+function flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath) {
+  const assetFolder = path.join(jsonFlaggedDir, path.parse(fileName).name);
+  ensureDir(assetFolder);
+
+  fs.copyFileSync(oldFile, path.join(assetFolder, "original" + path.extname(fileName)));
+  fs.copyFileSync(newFile, path.join(assetFolder, "new" + path.extname(fileName)));
+
+  if (oldJsonPath && fs.existsSync(oldJsonPath)) {
+    fs.copyFileSync(oldJsonPath, path.join(assetFolder, "original.json"));
+  }
+
+  if (newJsonPath && fs.existsSync(newJsonPath)) {
+    fs.copyFileSync(newJsonPath, path.join(assetFolder, "new.json"));
+  }
+
+  fs.writeFileSync(
+    path.join(assetFolder, "details.json"),
+    JSON.stringify({ reason: "JSON structure mismatch", asset: fileName }, null, 2)
+  );
+}
+
+/* ---------------- MAIN PIPELINE ---------------- */
+
+async function replaceAssets() {
+  ensureDir(initialFlaggedDir);
+  ensureDir(normalFlaggedDir);
+  ensureDir(jsonFlaggedDir);
 
   const newFiles = getAllFiles(newAssetsDir);
   const clonedFiles = getAllFiles(clonedDir);
 
   const clonedMap = {};
-
-  clonedFiles.forEach((file) => {
+  clonedFiles.forEach(file => {
     clonedMap[path.basename(file)] = file;
   });
 
-  const report = {
-    sizeChangedOnly: [],
-    dimensionChangedOnly: [],
-    bothChanged: [],
-    unchanged: []
-  };
-
   for (const newFile of newFiles) {
     const fileName = path.basename(newFile);
+    const ext = path.extname(fileName).toLowerCase();
 
     if (!clonedMap[fileName]) continue;
 
     const oldFile = clonedMap[fileName];
 
+    /* ---- Skip sprite sheets ---- */
+    if (spriteExtensions.includes(ext)) {
+      fs.copyFileSync(newFile, oldFile);
+      console.log("🟢 Sprite replaced:", fileName);
+      continue;
+    }
+
+    /* ---- JSON VALIDATION ---- */
+    const baseName = path.parse(fileName).name;
+    const newJsonPath = path.join(path.dirname(newFile), baseName + ".json");
+    const oldJsonPath = path.join(path.dirname(oldFile), baseName + ".json");
+
+    if (fs.existsSync(newJsonPath) && fs.existsSync(oldJsonPath)) {
+      const jsonValid = validateJsonStructure(oldJsonPath, newJsonPath);
+
+      if (!jsonValid) {
+        flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath);
+        console.log("🚨 JSON STRUCTURE MISMATCH:", fileName);
+        continue; // DO NOT REPLACE
+      }
+    }
+
+    /* ---- IMAGE SAFETY VALIDATION ---- */
+
     const oldStat = fs.statSync(oldFile);
     const newStat = fs.statSync(newFile);
 
-    const oldSizeKB = bytesToKB(oldStat.size);
-    const newSizeKB = bytesToKB(newStat.size);
-    const sizeDifferenceKB = bytesToKB(newStat.size - oldStat.size);
-
+    const sizeDifferencePercent = percentDiff(oldStat.size, newStat.size);
     const oldDimensions = await getDimensions(oldFile);
     const newDimensions = await getDimensions(newFile);
 
-    // Replace file
-    fs.copyFileSync(newFile, oldFile);
+    const strict = isStrictAsset(fileName);
 
-    const sizeChanged = oldSizeKB !== newSizeKB;
-    const dimensionChanged = oldDimensions !== newDimensions;
+    let dimensionMatch = true;
+    let dimensionDiffPercent = 0;
 
-    const entry = {
-      file: fileName,
-      oldSizeKB,
-      newSizeKB,
-      sizeDifferenceKB,
-      oldDimensions,
-      newDimensions
-    };
-
-    if (sizeChanged && dimensionChanged) {
-      report.bothChanged.push(entry);
-    } else if (sizeChanged) {
-      report.sizeChangedOnly.push(entry);
-    } else if (dimensionChanged) {
-      report.dimensionChangedOnly.push(entry);
-    } else {
-      report.unchanged.push(entry);
+    if (oldDimensions && newDimensions) {
+      const widthDiff = percentDiff(oldDimensions.width, newDimensions.width);
+      const heightDiff = percentDiff(oldDimensions.height, newDimensions.height);
+      dimensionDiffPercent = Math.max(widthDiff, heightDiff);
+      dimensionMatch = widthDiff === 0 && heightDiff === 0;
     }
 
-    console.log(`🔁 Replaced: ${fileName}`);
+    let safeToReplace = false;
+
+    if (strict) {
+      if (dimensionMatch && sizeDifferencePercent <= 50) {
+        safeToReplace = true;
+      }
+    } else {
+      if (sizeDifferencePercent <= 70 && dimensionDiffPercent <= 20) {
+        safeToReplace = true;
+      }
+    }
+
+    if (safeToReplace) {
+      fs.copyFileSync(newFile, oldFile);
+      console.log("✅ Replaced safely:", fileName);
+    } else {
+      const targetDir = strict ? initialFlaggedDir : normalFlaggedDir;
+      const assetFolder = path.join(targetDir, baseName);
+      ensureDir(assetFolder);
+
+      fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
+      fs.copyFileSync(newFile, path.join(assetFolder, "new" + ext));
+
+      fs.writeFileSync(
+        path.join(assetFolder, "details.json"),
+        JSON.stringify({
+          asset: fileName,
+          strictCategory: strict,
+          oldSizeKB: bytesToKB(oldStat.size),
+          newSizeKB: bytesToKB(newStat.size),
+          sizeDifferencePercent: sizeDifferencePercent.toFixed(2),
+          oldDimensions,
+          newDimensions,
+          dimensionDifferencePercent: dimensionDiffPercent.toFixed(2)
+        }, null, 2)
+      );
+
+      console.log("🚨 Flagged unsafe asset:", fileName);
+    }
   }
 
-  fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-  console.log("\n📊 report.json generated successfully.");
+  console.log("\n🎯 FULL VALIDATION + REPLACEMENT COMPLETE.");
 }
 
 replaceAssets();
