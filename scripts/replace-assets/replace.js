@@ -1,24 +1,13 @@
 const fs = require("fs");
 const path = require("path");
-const sizeOf = require("image-size");
+const sharp = require("sharp");
 
-const parentDir = path.resolve(__dirname, "../../..");
-const newAssetsDir = path.join(parentDir, "NewAssets");
-const clonedDir = path.join(parentDir, "Cloned-Game");
-const reportPath = path.join(parentDir, "report.json");
+const projectRoot = path.resolve(__dirname, "../..");
+const newAssetsDir = path.join(projectRoot, "NewAssets");
+const clonedDir = path.join(projectRoot, "Cloned-Game");
+const reportPath = path.join(projectRoot, "report.json");
 
-const supportedImageExt = [".png", ".jpg", ".jpeg"];
-const supportedExt = [
-  ".png",
-  ".jpg",
-  ".jpeg",
-  ".svg",
-  ".json",
-  ".atlas",
-  ".webp"
-];
-
-let report = [];
+const supportedImageExt = [".png", ".jpg", ".jpeg", ".webp"];
 
 function getAllFiles(dir) {
   let results = [];
@@ -28,7 +17,7 @@ function getAllFiles(dir) {
     const filePath = path.join(dir, file);
     const stat = fs.statSync(filePath);
 
-    if (stat && stat.isDirectory()) {
+    if (stat.isDirectory()) {
       results = results.concat(getAllFiles(filePath));
     } else {
       results.push(filePath);
@@ -38,22 +27,36 @@ function getAllFiles(dir) {
   return results;
 }
 
-function getDimensions(filePath) {
-  try {
-    if (supportedImageExt.includes(path.extname(filePath).toLowerCase())) {
-      return sizeOf(filePath);
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
 function bytesToKB(bytes) {
   return (bytes / 1024).toFixed(2);
 }
 
-function replaceAssets() {
+async function getDimensions(filePath) {
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    if (!supportedImageExt.includes(ext)) return null;
+
+    const metadata = await sharp(filePath).metadata();
+
+    if (!metadata.width || !metadata.height) return null;
+
+    return `${metadata.width}x${metadata.height}`;
+  } catch {
+    return null;
+  }
+}
+
+async function replaceAssets() {
+  if (!fs.existsSync(newAssetsDir)) {
+    console.error("❌ NewAssets folder not found.");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(clonedDir)) {
+    console.error("❌ Cloned-Game folder not found.");
+    process.exit(1);
+  }
+
   const newFiles = getAllFiles(newAssetsDir);
   const clonedFiles = getAllFiles(clonedDir);
 
@@ -63,47 +66,60 @@ function replaceAssets() {
     clonedMap[path.basename(file)] = file;
   });
 
-  newFiles.forEach((newFile) => {
+  const report = {
+    sizeChangedOnly: [],
+    dimensionChangedOnly: [],
+    bothChanged: [],
+    unchanged: []
+  };
+
+  for (const newFile of newFiles) {
     const fileName = path.basename(newFile);
-    const ext = path.extname(newFile).toLowerCase();
 
-    if (!supportedExt.includes(ext)) return;
+    if (!clonedMap[fileName]) continue;
 
-    if (clonedMap[fileName]) {
-      const oldFile = clonedMap[fileName];
+    const oldFile = clonedMap[fileName];
 
-      const oldStat = fs.statSync(oldFile);
-      const newStat = fs.statSync(newFile);
+    const oldStat = fs.statSync(oldFile);
+    const newStat = fs.statSync(newFile);
 
-      const oldSizeKB = bytesToKB(oldStat.size);
-      const newSizeKB = bytesToKB(newStat.size);
+    const oldSizeKB = bytesToKB(oldStat.size);
+    const newSizeKB = bytesToKB(newStat.size);
+    const sizeDifferenceKB = bytesToKB(newStat.size - oldStat.size);
 
-      const sizeDiffKB = bytesToKB(newStat.size - oldStat.size);
+    const oldDimensions = await getDimensions(oldFile);
+    const newDimensions = await getDimensions(newFile);
 
-      const oldDim = getDimensions(oldFile);
-      const newDim = getDimensions(newFile);
+    // Replace file
+    fs.copyFileSync(newFile, oldFile);
 
-      fs.copyFileSync(newFile, oldFile);
+    const sizeChanged = oldSizeKB !== newSizeKB;
+    const dimensionChanged = oldDimensions !== newDimensions;
 
-      report.push({
-        file: fileName,
-        oldSizeKB,
-        newSizeKB,
-        sizeDifferenceKB: sizeDiffKB,
-        oldDimensions: oldDim
-          ? `${oldDim.width}x${oldDim.height}`
-          : null,
-        newDimensions: newDim
-          ? `${newDim.width}x${newDim.height}`
-          : null,
-      });
+    const entry = {
+      file: fileName,
+      oldSizeKB,
+      newSizeKB,
+      sizeDifferenceKB,
+      oldDimensions,
+      newDimensions
+    };
 
-      console.log(`🔁 Replaced: ${fileName}`);
+    if (sizeChanged && dimensionChanged) {
+      report.bothChanged.push(entry);
+    } else if (sizeChanged) {
+      report.sizeChangedOnly.push(entry);
+    } else if (dimensionChanged) {
+      report.dimensionChangedOnly.push(entry);
+    } else {
+      report.unchanged.push(entry);
     }
-  });
+
+    console.log(`🔁 Replaced: ${fileName}`);
+  }
 
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
-  console.log("📊 report.json generated.");
+  console.log("\n📊 report.json generated successfully.");
 }
 
 replaceAssets();
