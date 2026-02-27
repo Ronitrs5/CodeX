@@ -1,0 +1,19 @@
+{
+  "name": "codex",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "clone": "node scripts/clone/clone-repo.js",
+    "extract": "node scripts/extract-images/extract.js",
+    "replace": "node scripts/replace-assets/replace.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "image-size": "^2.0.2"
+  }
+}
