@@ -13,6 +13,7 @@ const flaggedRoot = path.join(generatedRoot, "flaggedAssets");
 if (!fs.existsSync(generatedRoot)) {
   fs.mkdirSync(generatedRoot);
 }
+
 const initialFlaggedDir = path.join(flaggedRoot, "initialloadedflagged");
 const normalFlaggedDir = path.join(flaggedRoot, "normalloadedflagged");
 const jsonFlaggedDir = path.join(flaggedRoot, "jsonFlagged");
@@ -29,6 +30,19 @@ const strictKeywords = [
   "loading",
   "boot"
 ];
+
+/* ---------------- METRICS ---------------- */
+
+let replacedCount = 0;
+let strictSafeCount = 0;
+let strictFlaggedCount = 0;
+let normalSafeCount = 0;
+let normalFlaggedCount = 0;
+let jsonMismatchCount = 0;
+let atlasMismatchCount = 0;
+let totalInitialAssets = 0;
+
+/* ---------------- UTIL ---------------- */
 
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
@@ -137,6 +151,21 @@ function flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath) {
 
 /* ---------------- MAIN PIPELINE ---------------- */
 
+function calculateTotalImageSize(dir) {
+  const allFiles = getAllFiles(dir);
+
+  let totalBytes = 0;
+
+  allFiles.forEach(file => {
+    const ext = path.extname(file).toLowerCase();
+    if (supportedImageExt.includes(ext)) {
+      totalBytes += fs.statSync(file).size;
+    }
+  });
+
+  return totalBytes;
+}
+
 async function replaceAssets() {
   ensureDir(initialFlaggedDir);
   ensureDir(normalFlaggedDir);
@@ -158,19 +187,21 @@ async function replaceAssets() {
 
     const oldFile = clonedMap[fileName];
 
-    /* ---- Skip sprite sheets ---- */
-if (spriteExtensions.includes(ext)) {
-  const atlasValid = validateAndHandleAtlas(fileName, oldFile, newFile);
+    /* ---- SPRITE VALIDATION ---- */
+    if (spriteExtensions.includes(ext)) {
+      const atlasValid = validateAndHandleAtlas(fileName, oldFile, newFile);
 
-  if (atlasValid) {
-    fs.copyFileSync(newFile, oldFile);
-    console.log("🟢 Sprite replaced (validated):", fileName);
-  } else {
-    console.log("🚨 Sprite atlas mismatch flagged:", fileName);
-  }
+      if (atlasValid) {
+        fs.copyFileSync(newFile, oldFile);
+        replacedCount++;
+        console.log("🟢 Sprite replaced (validated):", fileName);
+      } else {
+        atlasMismatchCount++;
+        console.log("🚨 Sprite atlas mismatch flagged:", fileName);
+      }
 
-  continue;
-}
+      continue;
+    }
 
     /* ---- JSON VALIDATION ---- */
     const baseName = path.parse(fileName).name;
@@ -181,9 +212,10 @@ if (spriteExtensions.includes(ext)) {
       const jsonValid = validateJsonStructure(oldJsonPath, newJsonPath);
 
       if (!jsonValid) {
+        jsonMismatchCount++;
         flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath);
         console.log("🚨 JSON STRUCTURE MISMATCH:", fileName);
-        continue; // DO NOT REPLACE
+        continue;
       }
     }
 
@@ -211,6 +243,7 @@ if (spriteExtensions.includes(ext)) {
     let safeToReplace = false;
 
     if (strict) {
+      totalInitialAssets++;
       if (dimensionMatch && sizeDifferencePercent <= 50) {
         safeToReplace = true;
       }
@@ -222,6 +255,14 @@ if (spriteExtensions.includes(ext)) {
 
     if (safeToReplace) {
       fs.copyFileSync(newFile, oldFile);
+      replacedCount++;
+
+      if (strict) {
+        strictSafeCount++;
+      } else {
+        normalSafeCount++;
+      }
+
       console.log("✅ Replaced safely:", fileName);
     } else {
       const targetDir = strict ? initialFlaggedDir : normalFlaggedDir;
@@ -245,9 +286,51 @@ if (spriteExtensions.includes(ext)) {
         }, null, 2)
       );
 
+      if (strict) {
+        strictFlaggedCount++;
+      } else {
+        normalFlaggedCount++;
+      }
+
       console.log("🚨 Flagged unsafe asset:", fileName);
     }
   }
+
+  /* ---------------- WRITE METRICS ---------------- */
+
+  const metricsPath = path.join(generatedRoot, "pipelineMetrics.json");
+
+/* ---- TOTAL SIZE CALCULATION ---- */
+
+const totalClonedBytes = calculateTotalImageSize(clonedDir);
+const totalNewBytes = calculateTotalImageSize(newAssetsDir);
+
+const totalClonedKB = (totalClonedBytes / 1024).toFixed(2);
+const totalNewKB = (totalNewBytes / 1024).toFixed(2);
+
+const totalDiffBytes = totalNewBytes - totalClonedBytes;
+const totalDiffKB = (totalDiffBytes / 1024).toFixed(2);
+const totalDiffMB = (totalDiffBytes / (1024 * 1024)).toFixed(2);
+
+/* ---- SUMMARY ---- */
+
+const summary = {
+  replacedCount,
+  strictSafeCount,
+  strictFlaggedCount,
+  normalSafeCount,
+  normalFlaggedCount,
+  jsonMismatchCount,
+  atlasMismatchCount,
+  totalInitialAssets,
+
+  oldGameAssetSize: totalClonedKB,
+  newGameAssetSize: totalNewKB,
+  totalAssetSizeDiffKB: totalDiffKB,
+  totalAssetSizeDiffMB: totalDiffMB
+};
+
+  fs.writeFileSync(metricsPath, JSON.stringify(summary, null, 2));
 
   console.log("\n🎯 FULL VALIDATION + REPLACEMENT COMPLETE.");
 }
