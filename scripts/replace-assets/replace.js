@@ -7,6 +7,7 @@ const { getDimensions } = require("./utils/imageUtils");
 const { isStrictAsset } = require("./utils/assetTypeUtils");
 const { validateJsonStructure, flagJsonAsset } = require("./utils/jsonValidation");
 const { validateAndHandleAtlas } = require("../validation/spriteAtlasValidation.js");
+const { semanticCompare } = require("../shared/semanticUtils");
 
 const projectRoot = path.resolve(__dirname, "../..");
 const generatedRoot = path.join(projectRoot, "Generated");
@@ -22,6 +23,7 @@ if (!fs.existsSync(generatedRoot)) {
 const initialFlaggedDir = path.join(flaggedRoot, "initialloadedflagged");
 const normalFlaggedDir = path.join(flaggedRoot, "normalloadedflagged");
 const jsonFlaggedDir = path.join(flaggedRoot, "jsonFlagged");
+const semanticFlaggedDir = path.join(flaggedRoot, "semanticFlagged");
 
 const supportedImageExt = [".png", ".jpg", ".jpeg", ".webp"];
 const spriteExtensions = [".atlas", ".spline"];
@@ -36,6 +38,8 @@ let normalFlaggedCount = 0;
 let jsonMismatchCount = 0;
 let atlasMismatchCount = 0;
 let totalInitialAssets = 0;
+let semanticCriticalCount = 0;
+let semanticWarningCount = 0;
 
 /* ---------------- UTIL ---------------- */
 
@@ -61,6 +65,7 @@ async function replaceAssets() {
   ensureDir(initialFlaggedDir);
   ensureDir(normalFlaggedDir);
   ensureDir(jsonFlaggedDir);
+  ensureDir(semanticFlaggedDir);
 
   const newFiles = getAllFiles(newAssetsDir);
   const clonedFiles = getAllFiles(clonedDir);
@@ -144,18 +149,50 @@ async function replaceAssets() {
       }
     }
 
-    if (safeToReplace) {
-      fs.copyFileSync(newFile, oldFile);
-      replacedCount++;
+    if (safeToReplace && supportedImageExt.includes(ext)) {
 
-      if (strict) {
-        strictSafeCount++;
-      } else {
-        normalSafeCount++;
-      }
+  // ---- SEMANTIC VALIDATION ----
+  const semanticResult = await semanticCompare(oldFile, newFile);
 
-      console.log("✅ Replaced safely:", fileName);
-    } else {
+  if (semanticResult.severity === "CRITICAL") {
+    semanticCriticalCount++;
+
+    const assetFolder = path.join(semanticFlaggedDir, baseName);
+    ensureDir(assetFolder);
+
+    fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
+    fs.copyFileSync(newFile, path.join(assetFolder, "new" + ext));
+
+    fs.writeFileSync(
+      path.join(assetFolder, "semantic-details.json"),
+      JSON.stringify({
+        asset: fileName,
+        parentText: semanticResult.parentText,
+        newText: semanticResult.newText,
+        status: semanticResult.status
+      }, null, 2)
+    );
+
+    console.log("🚨 CRITICAL SEMANTIC MISMATCH:", fileName);
+    continue; // DO NOT replace
+  }
+
+  if (semanticResult.severity === "WARNING") {
+    semanticWarningCount++;
+    console.log("⚠️ Semantic text mismatch:", fileName);
+  }
+
+  fs.copyFileSync(newFile, oldFile);
+  replacedCount++;
+
+  if (strict) {
+    strictSafeCount++;
+  } else {
+    normalSafeCount++;
+  }
+
+  console.log("✅ Replaced safely:", fileName);
+}else {
 
       const targetDir = strict ? initialFlaggedDir : normalFlaggedDir;
       const assetFolder = path.join(targetDir, baseName);
@@ -263,7 +300,9 @@ async function replaceAssets() {
 
     flaggedAssets,
     missingAssets,
-    newAssets
+    newAssets,
+    semanticCriticalCount,
+semanticWarningCount,
   };
 
   fs.writeFileSync(metricsPath, JSON.stringify(summary, null, 2));
