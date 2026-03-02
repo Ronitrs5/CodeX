@@ -7,13 +7,16 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "clone": "node scripts/clone/clone-repo.js",
     "extract": "node scripts/extract-images/extract.js",
-    "replace": "node scripts/replace-assets/replace.js"
+    "replace": "node scripts/replace-assets/replace.js",
+    "assetdiff": "node scripts/validation/assetDiff.js",
+    "pipeline": "node scripts/runPipeline.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "image-size": "^2.0.2"
+    "image-size": "^2.0.2",
+    "sharp": "^0.34.5"
   }
 }

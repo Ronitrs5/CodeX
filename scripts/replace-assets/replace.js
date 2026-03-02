@@ -1,6 +1,11 @@
 const fs = require("fs");
 const path = require("path");
-const sharp = require("sharp");
+
+const { ensureDir, getAllFiles } = require("./utils/fileUtils");
+const { percentDiff, bytesToKB } = require("./utils/mathUtils");
+const { getDimensions } = require("./utils/imageUtils");
+const { isStrictAsset } = require("./utils/assetTypeUtils");
+const { validateJsonStructure, flagJsonAsset } = require("./utils/jsonValidation");
 const { validateAndHandleAtlas } = require("../validation/spriteAtlasValidation.js");
 
 const projectRoot = path.resolve(__dirname, "../..");
@@ -44,110 +49,6 @@ let totalInitialAssets = 0;
 
 /* ---------------- UTIL ---------------- */
 
-function ensureDir(dir) {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
-
-function getAllFiles(dir) {
-  let results = [];
-  const list = fs.readdirSync(dir);
-
-  list.forEach((file) => {
-    const filePath = path.join(dir, file);
-    const stat = fs.statSync(filePath);
-
-    if (stat.isDirectory()) {
-      results = results.concat(getAllFiles(filePath));
-    } else {
-      results.push(filePath);
-    }
-  });
-
-  return results;
-}
-
-function percentDiff(oldVal, newVal) {
-  if (oldVal === 0) return 0;
-  return Math.abs(((newVal - oldVal) / oldVal) * 100);
-}
-
-function bytesToKB(bytes) {
-  return (bytes / 1024).toFixed(2);
-}
-
-async function getDimensions(filePath) {
-  try {
-    const metadata = await sharp(filePath).metadata();
-    if (!metadata.width || !metadata.height) return null;
-    return { width: metadata.width, height: metadata.height };
-  } catch {
-    return null;
-  }
-}
-
-function isStrictAsset(fileName) {
-  const lower = fileName.toLowerCase();
-  return strictKeywords.some(keyword => lower.includes(keyword));
-}
-
-/* ---------------- JSON STRUCTURE VALIDATION ---------------- */
-
-function getStructure(obj) {
-  if (Array.isArray(obj)) {
-    return [getStructure(obj[0])];
-  }
-
-  if (obj !== null && typeof obj === "object") {
-    const structure = {};
-    Object.keys(obj).sort().forEach(key => {
-      structure[key] = getStructure(obj[key]);
-    });
-    return structure;
-  }
-
-  return typeof obj;
-}
-
-function structuresAreEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function validateJsonStructure(oldJsonPath, newJsonPath) {
-  try {
-    const oldJson = JSON.parse(fs.readFileSync(oldJsonPath, "utf-8"));
-    const newJson = JSON.parse(fs.readFileSync(newJsonPath, "utf-8"));
-
-    const oldStructure = getStructure(oldJson);
-    const newStructure = getStructure(newJson);
-
-    return structuresAreEqual(oldStructure, newStructure);
-  } catch {
-    return false;
-  }
-}
-
-function flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath) {
-  const assetFolder = path.join(jsonFlaggedDir, path.parse(fileName).name);
-  ensureDir(assetFolder);
-
-  fs.copyFileSync(oldFile, path.join(assetFolder, "original" + path.extname(fileName)));
-  fs.copyFileSync(newFile, path.join(assetFolder, "new" + path.extname(fileName)));
-
-  if (oldJsonPath && fs.existsSync(oldJsonPath)) {
-    fs.copyFileSync(oldJsonPath, path.join(assetFolder, "original.json"));
-  }
-
-  if (newJsonPath && fs.existsSync(newJsonPath)) {
-    fs.copyFileSync(newJsonPath, path.join(assetFolder, "new.json"));
-  }
-
-  fs.writeFileSync(
-    path.join(assetFolder, "details.json"),
-    JSON.stringify({ reason: "JSON structure mismatch", asset: fileName }, null, 2)
-  );
-}
 
 /* ---------------- MAIN PIPELINE ---------------- */
 
@@ -213,7 +114,7 @@ async function replaceAssets() {
 
       if (!jsonValid) {
         jsonMismatchCount++;
-        flagJsonAsset(fileName, oldFile, newFile, oldJsonPath, newJsonPath);
+        flagJsonAsset(jsonFlaggedDir, fileName, oldFile, newFile, oldJsonPath, newJsonPath, ensureDir);
         console.log("🚨 JSON STRUCTURE MISMATCH:", fileName);
         continue;
       }
@@ -265,13 +166,12 @@ async function replaceAssets() {
 
       console.log("✅ Replaced safely:", fileName);
     } else {
+
       const targetDir = strict ? initialFlaggedDir : normalFlaggedDir;
       const assetFolder = path.join(targetDir, baseName);
       ensureDir(assetFolder);
-
       fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
       fs.copyFileSync(newFile, path.join(assetFolder, "new" + ext));
-
       fs.writeFileSync(
         path.join(assetFolder, "details.json"),
         JSON.stringify({
