@@ -26,16 +26,6 @@ const jsonFlaggedDir = path.join(flaggedRoot, "jsonFlagged");
 const supportedImageExt = [".png", ".jpg", ".jpeg", ".webp"];
 const spriteExtensions = [".atlas", ".spline"];
 
-const strictKeywords = [
-  "splash",
-  "initial",
-  "init",
-  "loader",
-  "preload",
-  "loading",
-  "boot"
-];
-
 /* ---------------- METRICS ---------------- */
 
 let replacedCount = 0;
