@@ -296,39 +296,85 @@ async function replaceAssets() {
     }
   }
 
+
   /* ---------------- WRITE METRICS ---------------- */
 
   const metricsPath = path.join(generatedRoot, "pipelineMetrics.json");
 
-/* ---- TOTAL SIZE CALCULATION ---- */
+  // Helper to collect all flagged asset files (details.json) from a directory
+  function collectFlaggedAssets(dir) {
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir)
+      .map(folder => {
+        const detailsPath = path.join(dir, folder, "details.json");
+        if (fs.existsSync(detailsPath)) {
+          try {
+            const details = JSON.parse(fs.readFileSync(detailsPath, "utf-8"));
+            return { folder, ...details };
+          } catch {
+            return null;
+          }
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
 
-const totalClonedBytes = calculateTotalImageSize(clonedDir);
-const totalNewBytes = calculateTotalImageSize(newAssetsDir);
+  const flaggedAssets = {
+    initialFlagged: collectFlaggedAssets(initialFlaggedDir),
+    normalFlagged: collectFlaggedAssets(normalFlaggedDir),
+    jsonFlagged: collectFlaggedAssets(jsonFlaggedDir)
+  };
 
-const totalClonedKB = (totalClonedBytes / 1024).toFixed(2);
-const totalNewKB = (totalNewBytes / 1024).toFixed(2);
+  /* ---- TOTAL SIZE CALCULATION ---- */
 
-const totalDiffBytes = totalNewBytes - totalClonedBytes;
-const totalDiffKB = (totalDiffBytes / 1024).toFixed(2);
-const totalDiffMB = (totalDiffBytes / (1024 * 1024)).toFixed(2);
+  const totalClonedBytes = calculateTotalImageSize(clonedDir);
+  const totalNewBytes = calculateTotalImageSize(newAssetsDir);
 
-/* ---- SUMMARY ---- */
+  const totalClonedKB = (totalClonedBytes / 1024).toFixed(2);
+  const totalNewKB = (totalNewBytes / 1024).toFixed(2);
 
-const summary = {
-  replacedCount,
-  strictSafeCount,
-  strictFlaggedCount,
-  normalSafeCount,
-  normalFlaggedCount,
-  jsonMismatchCount,
-  atlasMismatchCount,
-  totalInitialAssets,
+  const totalDiffBytes = totalNewBytes - totalClonedBytes;
+  const totalDiffKB = (totalDiffBytes / 1024).toFixed(2);
+  const totalDiffMB = (totalDiffBytes / (1024 * 1024)).toFixed(2);
 
-  oldGameAssetSize: totalClonedKB,
-  newGameAssetSize: totalNewKB,
-  totalAssetSizeDiffKB: totalDiffKB,
-  totalAssetSizeDiffMB: totalDiffMB
-};
+  /* ---- MISSING & NEW ASSETS ---- */
+  const assetDiffRoot = path.join(generatedRoot, "assetdiff");
+  const missingAssetsDir = path.join(assetDiffRoot, "missingAssets");
+  const newAssetsDiffDir = path.join(assetDiffRoot, "newAssets");
+
+  function listAssetFolders(dir) {
+    if (!fs.existsSync(dir)) return [];
+    return fs.readdirSync(dir).filter(f => {
+      const full = path.join(dir, f);
+      return fs.statSync(full).isDirectory();
+    });
+  }
+
+  const missingAssets = listAssetFolders(missingAssetsDir);
+  const newAssets = listAssetFolders(newAssetsDiffDir);
+
+  /* ---- SUMMARY ---- */
+
+  const summary = {
+    replacedCount,
+    strictSafeCount,
+    strictFlaggedCount,
+    normalSafeCount,
+    normalFlaggedCount,
+    jsonMismatchCount,
+    atlasMismatchCount,
+    totalInitialAssets,
+
+    oldGameAssetSize: totalClonedKB,
+    newGameAssetSize: totalNewKB,
+    totalAssetSizeDiffKB: totalDiffKB,
+    totalAssetSizeDiffMB: totalDiffMB,
+
+    flaggedAssets,
+    missingAssets,
+    newAssets
+  };
 
   fs.writeFileSync(metricsPath, JSON.stringify(summary, null, 2));
 
