@@ -17,12 +17,14 @@ const generatedRoot = path.join(parentDir, "Generated");
 const cloneDir = path.join(generatedRoot, "Cloned-Game");
 
 if (!fs.existsSync(generatedRoot)) {
-  fs.mkdirSync(generatedRoot);
+  fs.mkdirSync(generatedRoot, { recursive: true });
 }
 
+/* -------- SKIP IF ALREADY CLONED -------- */
+
 if (fs.existsSync(cloneDir)) {
-  console.log("⚠️ Cloned-Game already exists. Deleting...");
-  fs.rmSync(cloneDir, { recursive: true, force: true });
+  console.log("✅ Cloned-Game already exists. Skipping clone process.");
+  process.exit(0);
 }
 
 try {

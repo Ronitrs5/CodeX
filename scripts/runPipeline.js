@@ -5,12 +5,17 @@ const projectRoot = path.resolve(__dirname, "..");
 
 const generatedDir = path.join(projectRoot, "Generated");
 
-if (fs.existsSync(generatedDir)) {
-  console.log("🧹 Cleaning previous Generated folder...");
-  fs.rmSync(generatedDir, { recursive: true, force: true });
+const flaggedDir = path.join(generatedDir, "flaggedAssets");
+const metricsFile = path.join(generatedDir, "pipelineMetrics.json");
+
+if (fs.existsSync(flaggedDir)) {
+  console.log("🧹 Cleaning flaggedAssets...");
+  fs.rmSync(flaggedDir, { recursive: true, force: true });
 }
 
-
+if (fs.existsSync(metricsFile)) {
+  fs.rmSync(metricsFile, { force: true });
+}
 
 
 function runStep(label, command) {

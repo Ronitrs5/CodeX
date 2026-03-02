@@ -266,9 +266,14 @@ async function replaceAssets() {
   const totalDiffMB = (totalDiffBytes / (1024 * 1024)).toFixed(2);
 
   /* ---- MISSING & NEW ASSETS ---- */
-  const assetDiffRoot = path.join(generatedRoot, "assetdiff");
-  const missingAssetsDir = path.join(assetDiffRoot, "missingAssets");
-  const newAssetsDiffDir = path.join(assetDiffRoot, "newAssets");
+/* ---- MISSING & NEW ASSETS ---- */
+
+const assetDiffRoot = path.join(flaggedRoot, "assetdiff");
+ensureDir(assetDiffRoot);
+const missingAssetsDir = path.join(assetDiffRoot, "missingAssets");
+const newAssetsDiffDir = path.join(assetDiffRoot, "newAssets");
+ensureDir(missingAssetsDir);
+ensureDir(newAssetsDiffDir);
 
   function listAssetFolders(dir) {
     if (!fs.existsSync(dir)) return [];
