@@ -36,7 +36,7 @@ try {
   );
 
   execSync(
-    `git clone -b ${branchFrom} ${repoWithToken} ${cloneDir}`,
+    `git clone -b ${branchFrom} "${repoWithToken}" "${cloneDir}"`,
     { stdio: "inherit" }
   );
 

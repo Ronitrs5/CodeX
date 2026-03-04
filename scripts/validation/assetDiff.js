@@ -14,6 +14,31 @@ const missingAssetsDiffDir = path.join(diffRoot, "missingAssets");
 const imageExtensions = [".png", ".jpg", ".jpeg", ".webp", ".svg"];
 const metaExtensions = [".json", ".atlas"];
 
+function normalizeProcessedSuffix(fileName) {
+  return fileName.toLowerCase().replace(/(\.[a-z0-9]+)_processed(\.[a-z0-9]+)$/i, "$1");
+}
+
+function isProcessedArtifact(fileName) {
+  return /(\.[a-z0-9]+)_processed(\.[a-z0-9]+)$/i.test(fileName);
+}
+
+function toPosixPath(relativePath) {
+  return relativePath.split(path.sep).join("/");
+}
+
+function buildRelativeKey(rootDir, filePath) {
+  const relativePath = toPosixPath(path.relative(rootDir, filePath));
+  const dir = path.posix.dirname(relativePath).toLowerCase();
+  const baseName = normalizeProcessedSuffix(path.posix.basename(relativePath));
+  return dir === "." ? baseName : `${dir}/${baseName}`;
+}
+
+function getDiffAssetFolder(targetDir, relativeKey) {
+  const parsed = path.posix.parse(relativeKey);
+  const nestedDir = parsed.dir === "." ? "" : parsed.dir;
+  return path.join(targetDir, nestedDir, parsed.name);
+}
+
 function ensureDir(dir) {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
@@ -38,42 +63,47 @@ function getAllFiles(dir) {
   return results;
 }
 
-function buildFullFileMap(files) {
+function buildFullFileMap(files, rootDir) {
   const map = {};
   files.forEach(file => {
-    map[path.basename(file)] = file;
+    if (isProcessedArtifact(path.basename(file))) return;
+    const key = buildRelativeKey(rootDir, file);
+    map[key] = file;
   });
   return map;
 }
 
-function buildImageMap(files) {
+function buildImageMap(files, rootDir) {
   const map = {};
   files.forEach(file => {
     const ext = path.extname(file).toLowerCase();
+    if (isProcessedArtifact(path.basename(file))) return;
     if (imageExtensions.includes(ext)) {
-      map[path.basename(file)] = file;
+      const key = buildRelativeKey(rootDir, file);
+      map[key] = file;
     }
   });
   return map;
 }
 
-function copyAssetWithMeta(baseName, sourceMap, targetDir) {
-  const base = path.parse(baseName).name;
-  const ext = path.parse(baseName).ext;
+function copyAssetWithMeta(relativeKey, sourceMap, targetDir) {
+  const sourceFile = sourceMap[relativeKey];
+  const parsed = path.posix.parse(relativeKey);
+  const base = parsed.name;
 
-  const assetFolder = path.join(targetDir, base);
+  const assetFolder = getDiffAssetFolder(targetDir, relativeKey);
   ensureDir(assetFolder);
 
   // Copy image
-  fs.copyFileSync(sourceMap[baseName], path.join(assetFolder, baseName));
+  fs.copyFileSync(sourceFile, path.join(assetFolder, path.basename(sourceFile)));
 
   // Check and copy .json / .atlas
   metaExtensions.forEach(metaExt => {
-    const metaFileName = base + metaExt;
-    if (sourceMap[metaFileName]) {
+    const metaRelativeKey = (parsed.dir === "." ? "" : `${parsed.dir}/`) + `${base}${metaExt}`;
+    if (sourceMap[metaRelativeKey]) {
       fs.copyFileSync(
-        sourceMap[metaFileName],
-        path.join(assetFolder, metaFileName)
+        sourceMap[metaRelativeKey],
+        path.join(assetFolder, path.basename(sourceMap[metaRelativeKey]))
       );
     }
   });
@@ -87,28 +117,28 @@ function runAssetDiff() {
   const newFiles = getAllFiles(newAssetsDir);
   const clonedFiles = getAllFiles(clonedDir);
 
-  const newFullMap = buildFullFileMap(newFiles);
-  const clonedFullMap = buildFullFileMap(clonedFiles);
+  const newFullMap = buildFullFileMap(newFiles, newAssetsDir);
+  const clonedFullMap = buildFullFileMap(clonedFiles, clonedDir);
 
-  const newImageMap = buildImageMap(newFiles);
-  const clonedImageMap = buildImageMap(clonedFiles);
+  const newImageMap = buildImageMap(newFiles, newAssetsDir);
+  const clonedImageMap = buildImageMap(clonedFiles, clonedDir);
 
   const newAssetNames = Object.keys(newImageMap);
   const clonedAssetNames = Object.keys(clonedImageMap);
 
   /* -------- NEW ASSETS -------- */
-  newAssetNames.forEach(fileName => {
-    if (!clonedImageMap[fileName]) {
-      copyAssetWithMeta(fileName, newFullMap, newAssetsDiffDir);
-      console.log("🆕 New Asset Detected:", fileName);
+  newAssetNames.forEach(relativeKey => {
+    if (!clonedImageMap[relativeKey]) {
+      copyAssetWithMeta(relativeKey, newFullMap, newAssetsDiffDir);
+      console.log("🆕 New Asset Detected:", relativeKey);
     }
   });
 
   /* -------- MISSING ASSETS -------- */
-  clonedAssetNames.forEach(fileName => {
-    if (!newImageMap[fileName]) {
-      copyAssetWithMeta(fileName, clonedFullMap, missingAssetsDiffDir);
-      console.log("❌ Missing Asset Detected:", fileName);
+  clonedAssetNames.forEach(relativeKey => {
+    if (!newImageMap[relativeKey]) {
+      copyAssetWithMeta(relativeKey, clonedFullMap, missingAssetsDiffDir);
+      console.log("❌ Missing Asset Detected:", relativeKey);
     }
   });
 

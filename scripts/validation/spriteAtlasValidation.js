@@ -13,6 +13,16 @@ function ensureDir(dir) {
   }
 }
 
+function toPosixPath(relativePath) {
+  return relativePath.split(path.sep).join("/");
+}
+
+function getFlagAssetFolder(fileOrPath) {
+  const parsed = path.posix.parse(toPosixPath(fileOrPath));
+  const nestedDir = parsed.dir === "." ? "" : parsed.dir;
+  return path.join(spriteFlaggedDir, nestedDir, parsed.name);
+}
+
 function extractFrameNames(atlasContent) {
   const lines = atlasContent.split("\n");
   const frames = [];
@@ -59,11 +69,10 @@ function validateAtlasStructure(oldPath, newPath) {
   };
 }
 
-function flagAtlas(fileName, oldPath, newPath, details) {
+function flagAtlas(fileName, oldPath, newPath, details, assetPath) {
   ensureDir(spriteFlaggedDir);
 
-  const baseName = path.parse(fileName).name;
-  const assetFolder = path.join(spriteFlaggedDir, baseName);
+  const assetFolder = getFlagAssetFolder(assetPath || fileName);
 
   ensureDir(assetFolder);
 
@@ -76,11 +85,11 @@ function flagAtlas(fileName, oldPath, newPath, details) {
   );
 }
 
-function validateAndHandleAtlas(fileName, oldPath, newPath) {
+function validateAndHandleAtlas(fileName, oldPath, newPath, assetPath) {
   const result = validateAtlasStructure(oldPath, newPath);
 
   if (!result.isValid) {
-    flagAtlas(fileName, oldPath, newPath, result);
+    flagAtlas(fileName, oldPath, newPath, result, assetPath);
     return false;
   }
 

@@ -31,11 +31,22 @@ function validateJsonStructure(oldJsonPath, newJsonPath) {
   }
 }
 
-function flagJsonAsset(jsonFlaggedDir, fileName, oldFile, newFile, oldJsonPath, newJsonPath, ensureDir) {
-  const assetFolder = path.join(jsonFlaggedDir, path.parse(fileName).name);
+function toPosixPath(relativePath) {
+  return relativePath.split(path.sep).join("/");
+}
+
+function getFlagAssetFolder(jsonFlaggedDir, assetPath) {
+  const parsed = path.posix.parse(toPosixPath(assetPath));
+  const nestedDir = parsed.dir === "." ? "" : parsed.dir;
+  return path.join(jsonFlaggedDir, nestedDir, parsed.name);
+}
+
+function flagJsonAsset(jsonFlaggedDir, assetPath, oldFile, newFile, oldJsonPath, newJsonPath, ensureDir) {
+  const assetFolder = getFlagAssetFolder(jsonFlaggedDir, assetPath);
   ensureDir(assetFolder);
-  fs.copyFileSync(oldFile, path.join(assetFolder, "original" + path.extname(fileName)));
-  fs.copyFileSync(newFile, path.join(assetFolder, "new" + path.extname(fileName)));
+  const ext = path.extname(assetPath);
+  fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
+  fs.copyFileSync(newFile, path.join(assetFolder, "new" + ext));
   if (oldJsonPath && fs.existsSync(oldJsonPath)) {
     fs.copyFileSync(oldJsonPath, path.join(assetFolder, "original.json"));
   }
@@ -44,7 +55,7 @@ function flagJsonAsset(jsonFlaggedDir, fileName, oldFile, newFile, oldJsonPath, 
   }
   fs.writeFileSync(
     path.join(assetFolder, "details.json"),
-    JSON.stringify({ reason: "JSON structure mismatch", asset: fileName }, null, 2)
+    JSON.stringify({ reason: "JSON structure mismatch", asset: assetPath }, null, 2)
   );
 }
 

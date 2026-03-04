@@ -5,7 +5,7 @@ const projectRoot = path.resolve(__dirname, "../..");
 const generatedRoot = path.join(projectRoot, "Generated");
 
 const clonedDir = path.join(generatedRoot, "Cloned-Game");
-const outputDir = path.join(generatedRoot, "extractedImages");
+const outputDir = path.join(projectRoot, "NewAssets");
 
 if (!fs.existsSync(generatedRoot)) {
   fs.mkdirSync(generatedRoot);
@@ -39,49 +39,38 @@ function getAllFiles(dir) {
   return results;
 }
 
-function extractImagesFlat() {
+function extractImagesFolderWise() {
   if (!fs.existsSync(clonedDir)) {
     console.error("❌ Cloned-Game folder not found.");
     process.exit(1);
   }
 
   if (fs.existsSync(outputDir)) {
-    console.log("⚠️ extractedImages already exists. Deleting...");
+    console.log("⚠️ NewAssets already exists. Deleting for fresh folder-wise extraction...");
     fs.rmSync(outputDir, { recursive: true, force: true });
   }
 
-  fs.mkdirSync(outputDir);
+  fs.mkdirSync(outputDir, { recursive: true });
 
   const allFiles = getAllFiles(clonedDir);
 
   let extractedCount = 0;
-  const nameCounter = {};
 
   allFiles.forEach((file) => {
     const ext = path.extname(file).toLowerCase();
 
     if (supportedImageExt.includes(ext)) {
-      let baseName = path.basename(file);
-
-      // Handle duplicate filenames
-      if (nameCounter[baseName]) {
-        const nameWithoutExt = path.parse(baseName).name;
-        const extension = path.parse(baseName).ext;
-        baseName = `${nameWithoutExt}_${nameCounter[baseName]}${extension}`;
-        nameCounter[path.basename(file)]++;
-      } else {
-        nameCounter[baseName] = 1;
-      }
-
-      const destinationPath = path.join(outputDir, baseName);
+      const relativePath = path.relative(clonedDir, file);
+      const destinationPath = path.join(outputDir, relativePath);
+      fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
       fs.copyFileSync(file, destinationPath);
 
       extractedCount++;
-      console.log(`📦 Extracted: ${baseName}`);
+      console.log(`📦 Extracted: ${relativePath}`);
     }
   });
 
-  console.log(`\n✅ Extraction complete. Total images extracted: ${extractedCount}`);
+  console.log(`\n✅ Folder-wise extraction complete into NewAssets. Total images extracted: ${extractedCount}`);
 }
 
-extractImagesFlat();
+extractImagesFolderWise();

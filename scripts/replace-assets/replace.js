@@ -28,6 +28,32 @@ const semanticFlaggedDir = path.join(flaggedRoot, "semanticFlagged");
 const supportedImageExt = [".png", ".jpg", ".jpeg", ".webp"];
 const spriteExtensions = [".atlas", ".spline"];
 
+function normalizeProcessedSuffix(fileName) {
+  return fileName.toLowerCase().replace(/(\.[a-z0-9]+)_processed(\.[a-z0-9]+)$/i, "$1");
+}
+
+function isProcessedArtifact(fileName) {
+  return /(\.[a-z0-9]+)_processed(\.[a-z0-9]+)$/i.test(fileName);
+}
+
+function toPosixPath(relativePath) {
+  return relativePath.split(path.sep).join("/");
+}
+
+function buildRelativeKey(rootDir, filePath) {
+  const relativePath = toPosixPath(path.relative(rootDir, filePath));
+  const dir = path.posix.dirname(relativePath).toLowerCase();
+  const baseName = normalizeProcessedSuffix(path.posix.basename(relativePath));
+  return dir === "." ? baseName : `${dir}/${baseName}`;
+}
+
+function getFlagAssetFolder(targetDir, relativePath) {
+  const posixRelativePath = toPosixPath(relativePath);
+  const parsed = path.posix.parse(posixRelativePath);
+  const nestedDir = parsed.dir === "." ? "" : parsed.dir;
+  return path.join(targetDir, nestedDir, parsed.name);
+}
+
 /* ---------------- METRICS ---------------- */
 
 let replacedCount = 0;
@@ -40,6 +66,8 @@ let atlasMismatchCount = 0;
 let totalInitialAssets = 0;
 let semanticCriticalCount = 0;
 let semanticWarningCount = 0;
+let semanticOcrUnavailableCount = 0;
+let semanticOcrWarningLogged = false;
 
 /* ---------------- UTIL ---------------- */
 
@@ -72,28 +100,31 @@ async function replaceAssets() {
 
   const clonedMap = {};
   clonedFiles.forEach(file => {
-    clonedMap[path.basename(file)] = file;
+    if (isProcessedArtifact(path.basename(file))) return;
+    const key = buildRelativeKey(clonedDir, file);
+    clonedMap[key] = file;
   });
 
   for (const newFile of newFiles) {
+    const relativeNewPath = toPosixPath(path.relative(newAssetsDir, newFile));
+    const relativeKey = buildRelativeKey(newAssetsDir, newFile);
     const fileName = path.basename(newFile);
     const ext = path.extname(fileName).toLowerCase();
 
-    if (!clonedMap[fileName]) continue;
-
-    const oldFile = clonedMap[fileName];
+    const oldFile = clonedMap[relativeKey];
+    if (!oldFile) continue;
 
     /* ---- SPRITE VALIDATION ---- */
     if (spriteExtensions.includes(ext)) {
-      const atlasValid = validateAndHandleAtlas(fileName, oldFile, newFile);
+      const atlasValid = validateAndHandleAtlas(fileName, oldFile, newFile, relativeNewPath);
 
       if (atlasValid) {
         fs.copyFileSync(newFile, oldFile);
         replacedCount++;
-        console.log("🟢 Sprite replaced (validated):", fileName);
+        console.log("🟢 Sprite replaced (validated):", relativeNewPath);
       } else {
         atlasMismatchCount++;
-        console.log("🚨 Sprite atlas mismatch flagged:", fileName);
+        console.log("🚨 Sprite atlas mismatch flagged:", relativeNewPath);
       }
 
       continue;
@@ -109,8 +140,8 @@ async function replaceAssets() {
 
       if (!jsonValid) {
         jsonMismatchCount++;
-        flagJsonAsset(jsonFlaggedDir, fileName, oldFile, newFile, oldJsonPath, newJsonPath, ensureDir);
-        console.log("🚨 JSON STRUCTURE MISMATCH:", fileName);
+        flagJsonAsset(jsonFlaggedDir, relativeNewPath, oldFile, newFile, oldJsonPath, newJsonPath, ensureDir);
+        console.log("🚨 JSON STRUCTURE MISMATCH:", relativeNewPath);
         continue;
       }
     }
@@ -154,10 +185,18 @@ async function replaceAssets() {
   // ---- SEMANTIC VALIDATION ----
   const semanticResult = await semanticCompare(oldFile, newFile);
 
+  if (semanticResult.status === "OCR_UNAVAILABLE") {
+    semanticOcrUnavailableCount++;
+    if (!semanticOcrWarningLogged) {
+      console.log("⚠️ Semantic OCR unavailable. Set TESSERACT_LANG_PATH or TESSERACT_ONLINE_MODE=1 to enable semantic checks.");
+      semanticOcrWarningLogged = true;
+    }
+  }
+
   if (semanticResult.severity === "CRITICAL") {
     semanticCriticalCount++;
 
-    const assetFolder = path.join(semanticFlaggedDir, baseName);
+    const assetFolder = getFlagAssetFolder(semanticFlaggedDir, relativeNewPath);
     ensureDir(assetFolder);
 
     fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
@@ -166,20 +205,20 @@ async function replaceAssets() {
     fs.writeFileSync(
       path.join(assetFolder, "semantic-details.json"),
       JSON.stringify({
-        asset: fileName,
+        asset: relativeNewPath,
         parentText: semanticResult.parentText,
         newText: semanticResult.newText,
         status: semanticResult.status
       }, null, 2)
     );
 
-    console.log("🚨 CRITICAL SEMANTIC MISMATCH:", fileName);
+    console.log("🚨 CRITICAL SEMANTIC MISMATCH:", relativeNewPath);
     continue; // DO NOT replace
   }
 
   if (semanticResult.severity === "WARNING") {
     semanticWarningCount++;
-    console.log("⚠️ Semantic text mismatch:", fileName);
+    console.log("⚠️ Semantic text mismatch:", relativeNewPath);
   }
 
   fs.copyFileSync(newFile, oldFile);
@@ -191,18 +230,18 @@ async function replaceAssets() {
     normalSafeCount++;
   }
 
-  console.log("✅ Replaced safely:", fileName);
+  console.log("✅ Replaced safely:", relativeNewPath);
 }else {
 
       const targetDir = strict ? initialFlaggedDir : normalFlaggedDir;
-      const assetFolder = path.join(targetDir, baseName);
+      const assetFolder = getFlagAssetFolder(targetDir, relativeNewPath);
       ensureDir(assetFolder);
       fs.copyFileSync(oldFile, path.join(assetFolder, "original" + ext));
       fs.copyFileSync(newFile, path.join(assetFolder, "new" + ext));
       fs.writeFileSync(
         path.join(assetFolder, "details.json"),
         JSON.stringify({
-          asset: fileName,
+          asset: relativeNewPath,
           strictCategory: strict,
           oldSizeKB: bytesToKB(oldStat.size),
           newSizeKB: bytesToKB(newStat.size),
@@ -219,7 +258,7 @@ async function replaceAssets() {
         normalFlaggedCount++;
       }
 
-      console.log("🚨 Flagged unsafe asset:", fileName);
+      console.log("🚨 Flagged unsafe asset:", relativeNewPath);
     }
   }
 
@@ -228,15 +267,34 @@ async function replaceAssets() {
 
   const metricsPath = path.join(generatedRoot, "pipelineMetrics.json");
 
+  function listDirectoriesRecursively(dir) {
+    if (!fs.existsSync(dir)) return [];
+
+    const output = [];
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(dir, entry.name);
+      if (!entry.isDirectory()) return;
+
+      output.push(fullPath);
+      output.push(...listDirectoriesRecursively(fullPath));
+    });
+
+    return output;
+  }
+
   // Helper to collect all flagged asset files (details.json) from a directory
   function collectFlaggedAssets(dir) {
     if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir)
-      .map(folder => {
-        const detailsPath = path.join(dir, folder, "details.json");
+
+    return listDirectoriesRecursively(dir)
+      .map(assetDir => {
+        const detailsPath = path.join(assetDir, "details.json");
         if (fs.existsSync(detailsPath)) {
           try {
             const details = JSON.parse(fs.readFileSync(detailsPath, "utf-8"));
+            const folder = toPosixPath(path.relative(dir, assetDir));
             return { folder, ...details };
           } catch {
             return null;
@@ -277,10 +335,10 @@ ensureDir(newAssetsDiffDir);
 
   function listAssetFolders(dir) {
     if (!fs.existsSync(dir)) return [];
-    return fs.readdirSync(dir).filter(f => {
-      const full = path.join(dir, f);
-      return fs.statSync(full).isDirectory();
-    });
+
+    return listDirectoriesRecursively(dir)
+      .filter(folder => fs.existsSync(path.join(folder, "details.json")) || fs.readdirSync(folder).some(item => fs.statSync(path.join(folder, item)).isFile()))
+      .map(folder => toPosixPath(path.relative(dir, folder)));
   }
 
   const missingAssets = listAssetFolders(missingAssetsDir);
@@ -308,6 +366,7 @@ ensureDir(newAssetsDiffDir);
     newAssets,
     semanticCriticalCount,
 semanticWarningCount,
+    semanticOcrUnavailableCount,
   };
 
   fs.writeFileSync(metricsPath, JSON.stringify(summary, null, 2));
